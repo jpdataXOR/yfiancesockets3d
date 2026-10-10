@@ -6,7 +6,7 @@ export default {
       "NZDUSD=X","EURGBP=X","EURJPY=X","GBPJPY=X","EURCHF=X",
       "CADJPY=X","EURCAD=X","EURNZD=X","EURAUD=X","GBPAUD=X",
       "GBPCAD=X","GBPNZD=X","CADCHF=X","NZDCHF=X","NZDJPY=X",
-      "SEK=X","NOK=X","DKK=X","BTCUSD=X"
+      "SEK=X","NOK=X","DKK=X","BTC-USD","ETH-USD","SOL-USD"
     ];
 
     const html = `
