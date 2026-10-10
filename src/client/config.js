@@ -30,7 +30,7 @@ export default `  // ---- tunables ----
   } catch (e) {}
 
   var UP = new THREE.Color(0x2ecc8f), DOWN = new THREE.Color(0xff5a5f), FLAT = new THREE.Color(0x7d8794);
-  var mode = "pct", scale = 40, demo = false, totalBytes = 0, tipPx = 3;
+  var mode = "norm", scale = 40, demo = false, totalBytes = 0, tipPx = 3;
 
   // ---- protobuf schema (unchanged from the original dashboard) ----
   var protoJSON = { nested: { PricingData: { fields: {
