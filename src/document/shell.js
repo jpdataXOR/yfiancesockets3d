@@ -55,7 +55,7 @@ export default `<!DOCTYPE html>
   <div style="margin-top:6px"><span id="status"></span><span id="status-text">Connecting</span></div>
   <div id="total-data">Data received: 0.00 MB</div>
   <div class="row"><label for="mode">Height shows</label>
-    <select id="mode"><option value="norm">Normalised</option><option value="pct">% change</option></select></div>
+    <select id="mode"><option value="norm">Normalised</option><option value="pct">% change</option><option value="rsi">RSI only</option></select></div>
   <div class="row"><label for="scale">Height scale</label><input id="scale" type="range" min="1" max="400" value="40"></div>
   <div class="row"><label for="tipsize">Dot size</label><input id="tipsize" type="range" min="0" max="10" step="0.5" value="3"></div>
   <div class="row"><label for="labels-on">Labels</label><input id="labels-on" type="checkbox" checked></div>

@@ -7,6 +7,8 @@ export default `  // ---- tunables ----
   var SPREAD = 0.085;       // angle between lines inside a wedge (radians)
   var NORM_H = 70;          // height of a normalised line
   var CLAMP_UP = 160, CLAMP_DOWN = 95;  // keep lines clear of the landscape
+  var RSI_PERIOD = 14;      // RSI lookback in samples (14 seconds at one point per second)
+  var RSI_H = 70;           // half-height of the RSI span (0 -> -RSI_H, 50 -> 0, 100 -> +RSI_H)
   var T_SIZE = 2600, T_SEG = 170, T_BASE = -150, T_HEIGHT = 55, T_FREQ = 1 / 520;
 
   // ---- themes ----

@@ -27,8 +27,8 @@ export default `  // ---- per-symbol objects ----
         sym: s, name: shortName(s), group: g.name, grp: g, crypto: s.indexOf("-USD") > -1,
         enabled: !Array.isArray(saved2) || saved2.indexOf(s) > -1,
         dx: Math.cos(a), dz: Math.sin(a),
-        live: null, sim: null, latest: null, base: null, ticks: 0, curPct: 0,
-        hist: [], pct: new Float32Array(N), tipPos: new THREE.Vector3(), shown: false
+        live: null, sim: null, latest: null, base: null, ticks: 0, curPct: 0, curRsi: 50,
+        hist: [], pct: new Float32Array(N), rsi: new Float32Array(N), tipPos: new THREE.Vector3(), shown: false
       };
 
       o.pos = new Float32Array(N * 3);
@@ -89,18 +89,51 @@ export default `  // ---- per-symbol objects ----
     o.curtain.geometry.setDrawRange(0, 0);
   }
 
+  // Wilder's RSI over the rolling price window. The first RSI_PERIOD samples
+  // repeat the first computable value so lines start flat instead of ramping.
+  function rsiValue(gain, loss) {
+    if (loss === 0) return gain === 0 ? 50 : 100;
+    if (gain === 0) return 0;
+    return 100 - 100 / (1 + gain / loss);
+  }
+  function computeRSI(h, n, out) {
+    var period = RSI_PERIOD, i;
+    if (n <= period) { for (i = 0; i < n; i++) out[i] = 50; return; }
+    var gain = 0, loss = 0;
+    for (i = 1; i <= period; i++) {
+      var d = h[i] - h[i - 1];
+      if (d > 0) gain += d; else loss -= d;
+    }
+    gain /= period; loss /= period;
+    var first = rsiValue(gain, loss);
+    for (i = 0; i <= period; i++) out[i] = first;
+    for (i = period + 1; i < n; i++) {
+      var e = h[i] - h[i - 1];
+      gain = (gain * (period - 1) + (e > 0 ? e : 0)) / period;
+      loss = (loss * (period - 1) + (e < 0 ? -e : 0)) / period;
+      out[i] = rsiValue(gain, loss);
+    }
+  }
+
   function rebuild(o) {
     var h = o.hist, n = h.length;
-    if (!o.enabled || n === 0 || o.base == null) return;
+    if (!o.enabled || n === 0) return;
+    var useRsi = mode === "rsi";
+    if (!useRsi && o.base == null) return;
     var maxAbs = 0, i;
-    for (i = 0; i < n; i++) {
-      o.pct[i] = (h[i] / o.base - 1) * 100;
-      var a = Math.abs(o.pct[i]);
-      if (a > maxAbs) maxAbs = a;
+    if (o.base != null) {
+      for (i = 0; i < n; i++) {
+        o.pct[i] = (h[i] / o.base - 1) * 100;
+        var a = Math.abs(o.pct[i]);
+        if (a > maxAbs) maxAbs = a;
+      }
+      o.curPct = o.pct[n - 1];
     }
+    if (useRsi) computeRSI(h, n, o.rsi);
     var y = 0, x = 0, z = 0;
     for (i = 0; i < n; i++) {
-      if (mode === "norm") y = maxAbs > 1e-9 ? o.pct[i] / maxAbs * NORM_H : 0;
+      if (useRsi) y = (o.rsi[i] - 50) * (RSI_H / 50);
+      else if (mode === "norm") y = maxAbs > 1e-9 ? o.pct[i] / maxAbs * NORM_H : 0;
       else y = Math.max(-CLAMP_DOWN, Math.min(CLAMP_UP, o.pct[i] * scale));
       var r = R0 + i * DR;
       x = o.dx * r; z = o.dz * r;
@@ -119,15 +152,17 @@ export default `  // ---- per-symbol objects ----
     o.curtain.geometry.attributes.color.needsUpdate = true;
     o.curtain.geometry.setDrawRange(0, Math.max(0, (n - 1) * 6));
 
-    o.curPct = o.pct[n - 1];
+    if (useRsi) o.curRsi = o.rsi[n - 1];
+    var up = useRsi ? o.curRsi > 50 : o.curPct > 0;
+    var down = useRsi ? o.curRsi < 50 : o.curPct < 0;
     o.tipPos.set(x, y, z);
     o.tip.position.copy(o.tipPos);
     o.tip.material.color.copy(y > 0.0001 ? UP : (y < -0.0001 ? DOWN : FLAT));
     o.shown = true;
     o.tip.visible = true;
     o.el.style.display = "block";
-    o.el.className = "lbl" + (o.curPct > 0 ? " up" : (o.curPct < 0 ? " down" : ""));
-    o.el.textContent = o.name + " " + fmtPct(o.curPct);
+    o.el.className = "lbl" + (up ? " up" : (down ? " down" : ""));
+    o.el.textContent = o.name + " " + (useRsi ? "RSI " + o.curRsi.toFixed(1) : fmtPct(o.curPct));
   }
 
   function fmtPct(v) { return (v >= 0 ? "+" : "") + v.toFixed(2) + "%"; }

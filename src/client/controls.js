@@ -46,7 +46,7 @@ export default `  // ---- keyboard panning ----
     if (!hovered) { tipEl.style.display = "none"; return; }
     hovered.el.classList.add("hot");
     tipEl.innerHTML = "<b>" + hovered.name + "</b> (" + hovered.group + ")<br>Price " + fmtPrice(hovered.latest) +
-      "<br>Change " + fmtPct(hovered.curPct) + "<br>Ticks " + hovered.ticks;
+      "<br>" + (mode === "rsi" ? "RSI " + hovered.curRsi.toFixed(1) : "Change " + fmtPct(hovered.curPct)) + "<br>Ticks " + hovered.ticks;
     tipEl.style.display = "block";
     tipEl.style.left = (mx + 14) + "px";
     tipEl.style.top = (my + 14) + "px";
