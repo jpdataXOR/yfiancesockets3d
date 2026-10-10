@@ -66,6 +66,17 @@ const PAGE = `<!DOCTYPE html>
   <div class="row"><label for="labels-on">Labels</label><input id="labels-on" type="checkbox" checked></div>
   <div class="row"><label for="demo">Simulate ticks</label><input id="demo" type="checkbox"></div>
   <div class="btns"><button id="rebase">Rebase to now</button><button id="reset-view">Reset view</button></div>
+  <div class="row"><label for="station">Radio</label>
+    <select id="station">
+      <option value="https://ice.somafm.com/dronezone">Drone Zone</option>
+      <option value="https://ice.somafm.com/deepspaceone">Deep Space One</option>
+      <option value="https://ice.somafm.com/spacestation">Space Station Soma</option>
+      <option value="https://ice.somafm.com/groovesalad">Groove Salad</option>
+      <option value="https://ice.somafm.com/gsclassic">Groove Salad Classic</option>
+    </select></div>
+  <div class="row"><button id="play" style="flex:0 0 74px">Play</button>
+    <input id="volume" type="range" min="0" max="100" value="40" aria-label="Volume"></div>
+  <div id="radio-status" style="color:#7d8794;font-size:12px;margin-top:6px">Stream by <a href="https://somafm.com" target="_blank" rel="noopener" style="color:#7d8794">SomaFM</a></div>
   <div id="hint">Drag to orbit. Right-drag or W A S D to pan. Q and E for down and up. Scroll to zoom.</div>
 </div>
 <div id="labels"></div>
@@ -331,6 +342,43 @@ const PAGE = `<!DOCTYPE html>
   document.getElementById("demo").addEventListener("change", function (e) { demo = e.target.checked; rebase(); });
   document.getElementById("rebase").addEventListener("click", rebase);
   document.getElementById("reset-view").addEventListener("click", resetView);
+
+  // ---- ambient radio (SomaFM) ----
+  var audio = new Audio();
+  audio.preload = "none";
+  audio.volume = 0.4;
+  var playBtn = document.getElementById("play");
+  var stationSel = document.getElementById("station");
+  var radioStatus = document.getElementById("radio-status");
+  var wantPlay = false;
+  function startRadio() {
+    wantPlay = true;
+    audio.src = stationSel.value;
+    radioStatus.textContent = "Connecting...";
+    var pr = audio.play();
+    if (pr && pr.catch) pr.catch(function () { radioStatus.textContent = "Could not start the stream"; playBtn.textContent = "Play"; wantPlay = false; });
+  }
+  function stopRadio() {
+    wantPlay = false;
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    playBtn.textContent = "Play";
+    radioStatus.textContent = "Stopped";
+  }
+  playBtn.addEventListener("click", function () { if (wantPlay) stopRadio(); else startRadio(); });
+  stationSel.addEventListener("change", function () { if (wantPlay) startRadio(); });
+  document.getElementById("volume").addEventListener("input", function (e) { audio.volume = Number(e.target.value) / 100; });
+  audio.addEventListener("playing", function () {
+    playBtn.textContent = "Pause";
+    radioStatus.textContent = "Playing " + stationSel.options[stationSel.selectedIndex].text;
+  });
+  audio.addEventListener("error", function () {
+    if (!wantPlay) return;
+    radioStatus.textContent = "Stream unavailable. Try another station.";
+    playBtn.textContent = "Play";
+    wantPlay = false;
+  });
 
   function updateClock() {
     var now = new Date();
