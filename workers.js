@@ -115,7 +115,14 @@ const PAGE = `<!DOCTYPE html>
   resetView();
 
   // floor grid, wedge dividers, centre axis
-  scene.add(new THREE.PolarGridHelper(RMAX + 12, 28, 6, 64, 0x2a3442, 0x161e2a));
+  var radPts = [];
+  for (var q = 0; q < 28; q++) {
+    var qa = q * 2 * Math.PI / 28;
+    radPts.push(0, 0, 0, Math.cos(qa) * (RMAX + 12), 0, Math.sin(qa) * (RMAX + 12));
+  }
+  var radGeo = new THREE.BufferGeometry();
+  radGeo.setAttribute("position", new THREE.Float32BufferAttribute(radPts, 3));
+  scene.add(new THREE.LineSegments(radGeo, new THREE.LineBasicMaterial({ color: 0x232e3d })));
   var K = GROUPS.length;
   var divPts = [];
   for (var k = 0; k < K; k++) {
@@ -125,9 +132,6 @@ const PAGE = `<!DOCTYPE html>
   var divGeo = new THREE.BufferGeometry();
   divGeo.setAttribute("position", new THREE.Float32BufferAttribute(divPts, 3));
   scene.add(new THREE.LineSegments(divGeo, new THREE.LineBasicMaterial({ color: 0x3a4a60 })));
-  var axisGeo = new THREE.BufferGeometry();
-  axisGeo.setAttribute("position", new THREE.Float32BufferAttribute([0, -90, 0, 0, 160, 0], 3));
-  scene.add(new THREE.Line(axisGeo, new THREE.LineBasicMaterial({ color: 0x3a4a60 })));
 
   // ---- per-symbol objects ----
   var labelsEl = document.getElementById("labels");
