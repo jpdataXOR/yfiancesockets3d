@@ -1,0 +1,6 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "yfiancesockets3d",
+  "main": "workers.js",
+  "compatibility_date": "2026-10-10"
+}
