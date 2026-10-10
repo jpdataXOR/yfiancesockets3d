@@ -62,6 +62,7 @@ const PAGE = `<!DOCTYPE html>
   <div class="row"><label for="mode">Height shows</label>
     <select id="mode"><option value="pct">% change</option><option value="norm">Normalised</option></select></div>
   <div class="row"><label for="scale">Height scale</label><input id="scale" type="range" min="1" max="400" value="40"></div>
+  <div class="row"><label for="tipsize">Dot size</label><input id="tipsize" type="range" min="0" max="10" step="0.5" value="3"></div>
   <div class="row"><label for="labels-on">Labels</label><input id="labels-on" type="checkbox" checked></div>
   <div class="row"><label for="demo">Simulate ticks</label><input id="demo" type="checkbox"></div>
   <div class="btns"><button id="rebase">Rebase to now</button><button id="reset-view">Reset view</button></div>
@@ -87,7 +88,7 @@ const PAGE = `<!DOCTYPE html>
   var CLAMP = 160;          // max height in % change mode
 
   var UP = new THREE.Color(0x2ecc8f), DOWN = new THREE.Color(0xff5a5f), FLAT = new THREE.Color(0x7d8794);
-  var mode = "pct", scale = 40, demo = false, totalBytes = 0;
+  var mode = "pct", scale = 40, demo = false, totalBytes = 0, tipPx = 3;
 
   // ---- protobuf schema (unchanged from the original dashboard) ----
   var protoJSON = { nested: { PricingData: { fields: {
@@ -187,7 +188,7 @@ const PAGE = `<!DOCTYPE html>
       scene.add(o.curtain);
 
       // tip marker (also the hover target)
-      o.tip = new THREE.Mesh(new THREE.SphereGeometry(3.5, 12, 12), new THREE.MeshBasicMaterial({ color: 0x7d8794 }));
+      o.tip = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 12), new THREE.MeshBasicMaterial({ color: 0x7d8794 }));
       o.tip.visible = false;
       o.tip.userData.o = o;
       scene.add(o.tip);
@@ -319,6 +320,7 @@ const PAGE = `<!DOCTYPE html>
   // ---- UI wiring ----
   document.getElementById("mode").addEventListener("change", function (e) { mode = e.target.value; rebuildAll(); });
   document.getElementById("scale").addEventListener("input", function (e) { scale = Number(e.target.value); rebuildAll(); });
+  document.getElementById("tipsize").addEventListener("input", function (e) { tipPx = Number(e.target.value); });
   document.getElementById("labels-on").addEventListener("change", function (e) {
     labelsEl.className = e.target.checked ? "" : "off";
   });
@@ -362,19 +364,23 @@ const PAGE = `<!DOCTYPE html>
   }
 
   // ---- hover tooltip ----
-  var ray = new THREE.Raycaster(), mouse = new THREE.Vector2(-2, -2), mx = 0, my = 0, hovered = null;
+  var mouse = new THREE.Vector2(-9999, -9999), mx = 0, my = 0, hovered = null;
   var tipEl = document.getElementById("tip");
-  renderer.domElement.addEventListener("pointermove", function (e) {
-    mx = e.clientX; my = e.clientY;
-    mouse.x = e.clientX / W * 2 - 1; mouse.y = -(e.clientY / H) * 2 + 1;
-  });
-  renderer.domElement.addEventListener("pointerleave", function () { mouse.set(-2, -2); });
+  var hp = new THREE.Vector3();
+  renderer.domElement.addEventListener("pointermove", function (e) { mx = e.clientX; my = e.clientY; mouse.set(mx, my); });
+  renderer.domElement.addEventListener("pointerleave", function () { mouse.set(-9999, -9999); });
   function updateHover() {
-    ray.setFromCamera(mouse, camera);
-    var hits = ray.intersectObjects(tips);
-    var next = hits.length ? hits[0].object.userData.o : null;
-    if (hovered && hovered !== next) hovered.el.classList.remove("hot");
-    hovered = next;
+    var best = null, bestD = 16;
+    syms.forEach(function (o) {
+      if (!o.tip.visible) return;
+      hp.copy(o.tipPos).project(camera);
+      if (hp.z > 1) return;
+      var dx = (hp.x * 0.5 + 0.5) * W - mouse.x, dy = (-hp.y * 0.5 + 0.5) * H - mouse.y;
+      var d = Math.sqrt(dx * dx + dy * dy);
+      if (d < bestD) { bestD = d; best = o; }
+    });
+    if (hovered && hovered !== best) hovered.el.classList.remove("hot");
+    hovered = best;
     if (!hovered) { tipEl.style.display = "none"; return; }
     hovered.el.classList.add("hot");
     tipEl.innerHTML = "<b>" + hovered.name + "</b> (" + hovered.group + ")<br>Price " + fmtPrice(hovered.latest) +
@@ -403,6 +409,13 @@ const PAGE = `<!DOCTYPE html>
     keyPan(dt);
     controls.update();
     updateHover();
+    var pxToWorld = 2 * Math.tan(camera.fov * Math.PI / 360) / H;
+    syms.forEach(function (o) {
+      if (!o.tip.visible) return;
+      var sz = camera.position.distanceTo(o.tip.position) * pxToWorld * tipPx;
+      o.tip.scale.setScalar(sz);
+      o.tip.material.visible = tipPx > 0;
+    });
     renderer.render(scene, camera);
     GROUPS.forEach(function (g) { place(g.el, g.pos, true); });
     syms.forEach(function (o) { if (o.tip.visible) place(o.el, o.tipPos, false); });
