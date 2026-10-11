@@ -1,14 +1,18 @@
 // Client tunables, themes, live UI state and the Protobuf pricing schema.
 export default `  // ---- tunables ----
-  var N = 300;              // samples kept per symbol (N x SAMPLE_MS = window length)
+  var N = 300;              // live tick samples kept at the tip (N x SAMPLE_MS = live window)
+  var HIST_HOURLY = 72;     // hourly closes seeded from D1 at the centre
+  var NPTS = HIST_HOURLY + N;  // total line points (hourly history + live ticks)
   var SAMPLE_MS = 1000;     // one point per symbol per second
   var R0 = 18, RMAX = 260;  // inner and outer radius of the lines
-  var DR = (RMAX - R0) / (N - 1);
+  var DR = (RMAX - R0) / (NPTS - 1);
   var SPREAD = 0.085;       // angle between lines inside a wedge (radians)
   var NORM_H = 70;          // height of a normalised line
   var CLAMP_UP = 160, CLAMP_DOWN = 95;  // keep lines clear of the landscape
-  var RSI_PERIOD = 14;      // RSI lookback in samples (14 seconds at one point per second)
+  var RSI_PERIOD = 14;      // RSI lookback (hours for the history stretch, ticks for the live one)
   var RSI_H = 70;           // half-height of the RSI span (0 -> -RSI_H, 50 -> 0, 100 -> +RSI_H)
+  var ROC_H = 70;           // half-height of the ROC / combined-ROC span
+  var W_DAILY = 0.33, W_HOURLY = 0.33, W_TICK = 0.34;  // combined daily + hourly + tick ROC weights
   var T_SIZE = 2600, T_SEG = 170, T_BASE = -150, T_HEIGHT = 55, T_FREQ = 1 / 520;
 
   // ---- themes ----
@@ -32,7 +36,7 @@ export default `  // ---- tunables ----
   } catch (e) {}
 
   var UP = new THREE.Color(0x2ecc8f), DOWN = new THREE.Color(0xff5a5f), FLAT = new THREE.Color(0x7d8794);
-  var mode = "norm", scale = 40, demo = false, totalBytes = 0, tipPx = 3;
+  var mode = "hourly", demo = false, totalBytes = 0, tipPx = 3;
 
   // ---- protobuf schema (unchanged from the original dashboard) ----
   var protoJSON = { nested: { PricingData: { fields: {

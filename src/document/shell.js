@@ -55,8 +55,10 @@ export default `<!DOCTYPE html>
   <div style="margin-top:6px"><span id="status"></span><span id="status-text">Connecting</span></div>
   <div id="total-data">Data received: 0.00 MB</div>
   <div class="row"><label for="mode">Height shows</label>
-    <select id="mode"><option value="norm">Normalised</option><option value="pct">% change</option><option value="rsi">RSI only</option></select></div>
-  <div class="row"><label for="scale">Height scale</label><input id="scale" type="range" min="1" max="400" value="40"></div>
+    <select id="mode"><option value="hourly">Hourly</option><option value="rsi">RSI</option><option value="roc">ROC</option><option value="combined">Combined ROC</option></select></div>
+  <div class="row"><label for="wd">Weight daily</label><input id="wd" type="range" min="0" max="1" step="0.05" value="0.33"></div>
+  <div class="row"><label for="wh">Weight hourly</label><input id="wh" type="range" min="0" max="1" step="0.05" value="0.33"></div>
+  <div class="row"><label for="wt">Weight tick</label><input id="wt" type="range" min="0" max="1" step="0.05" value="0.34"></div>
   <div class="row"><label for="tipsize">Dot size</label><input id="tipsize" type="range" min="0" max="10" step="0.5" value="3"></div>
   <div class="row"><label for="labels-on">Labels</label><input id="labels-on" type="checkbox" checked></div>
   <div class="row"><label for="terrain-on">Landscape</label><input id="terrain-on" type="checkbox" checked></div>

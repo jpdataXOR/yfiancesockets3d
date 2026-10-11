@@ -5,6 +5,11 @@ export default `  // ---- per-symbol objects ----
   var saved2 = null;
   try { saved2 = JSON.parse(localStorage.getItem("cloud-sel")); } catch (e2) {}
 
+  // Historical series injected by the Worker (src/history.js).
+  var HIST = (typeof HISTORY === "object" && HISTORY) ? HISTORY : {};
+  function hourSeries(s) { return (HIST[s] && HIST[s].hourly) ? HIST[s].hourly : []; }
+  function daySeries(s) { return (HIST[s] && HIST[s].daily) ? HIST[s].daily : []; }
+
   function shortName(s) {
     var n = s.replace("=X", "");
     if (n.length === 3) n = "USD" + n;
@@ -27,12 +32,13 @@ export default `  // ---- per-symbol objects ----
         sym: s, name: shortName(s), group: g.name, grp: g, crypto: s.indexOf("-USD") > -1,
         enabled: !Array.isArray(saved2) || saved2.indexOf(s) > -1,
         dx: Math.cos(a), dz: Math.sin(a),
-        live: null, sim: null, latest: null, base: null, ticks: 0, curPct: 0, curRsi: 50,
-        hist: [], pct: new Float32Array(N), rsi: new Float32Array(N), tipPos: new THREE.Vector3(), shown: false
+        live: null, sim: null, latest: null, base: null, ticks: 0, curLabel: "",
+        daily: daySeries(s), hourly: hourSeries(s), hist: [], nHist: 0,
+        pct: new Float32Array(NPTS), rsi: new Float32Array(NPTS), tipPos: new THREE.Vector3(), shown: false
       };
 
-      o.pos = new Float32Array(N * 3);
-      o.col = new Float32Array(N * 3);
+      o.pos = new Float32Array(NPTS * 3);
+      o.col = new Float32Array(NPTS * 3);
       var lg = new THREE.BufferGeometry();
       lg.setAttribute("position", new THREE.BufferAttribute(o.pos, 3));
       lg.setAttribute("color", new THREE.BufferAttribute(o.col, 3));
@@ -41,13 +47,13 @@ export default `  // ---- per-symbol objects ----
       o.line.frustumCulled = false;
       scene.add(o.line);
 
-      o.cpos = new Float32Array(N * 2 * 3);
-      o.ccol = new Float32Array(N * 2 * 3);
+      o.cpos = new Float32Array(NPTS * 2 * 3);
+      o.ccol = new Float32Array(NPTS * 2 * 3);
       var cg = new THREE.BufferGeometry();
       cg.setAttribute("position", new THREE.BufferAttribute(o.cpos, 3));
       cg.setAttribute("color", new THREE.BufferAttribute(o.ccol, 3));
-      var idx = new Uint16Array((N - 1) * 6);
-      for (var i = 0; i < N - 1; i++) {
+      var idx = new Uint16Array((NPTS - 1) * 6);
+      for (var i = 0; i < NPTS - 1; i++) {
         var A = 2 * i, B = 2 * i + 1, C = 2 * i + 2, D = 2 * i + 3;
         idx.set([A, B, C, B, D, C], i * 6);
       }
@@ -89,25 +95,34 @@ export default `  // ---- per-symbol objects ----
     o.curtain.geometry.setDrawRange(0, 0);
   }
 
-  // Wilder's RSI over the rolling price window. The first RSI_PERIOD samples
-  // repeat the first computable value so lines start flat instead of ramping.
+  // Seed the inner stretch of the line from the D1 history: hourly closes first,
+  // then live ticks keep appending at the tip (see stream.js).
+  function seed(o) {
+    o.hist = o.hourly.slice();
+    o.nHist = o.hist.length;
+    o.base = o.hist.length ? o.hist[0] : null;
+  }
+  syms.forEach(seed);
+
+  // Wilder RSI over h[from..to), written into out[from..to). The first period
+  // samples repeat the first computable value so lines start flat.
   function rsiValue(gain, loss) {
     if (loss === 0) return gain === 0 ? 50 : 100;
     if (gain === 0) return 0;
     return 100 - 100 / (1 + gain / loss);
   }
-  function computeRSI(h, n, out) {
-    var period = RSI_PERIOD, i;
-    if (n <= period) { for (i = 0; i < n; i++) out[i] = 50; return; }
+  function computeRSI(h, from, to, out) {
+    var period = RSI_PERIOD, n = to - from, i;
+    if (n <= period) { for (i = from; i < to; i++) out[i] = 50; return; }
     var gain = 0, loss = 0;
-    for (i = 1; i <= period; i++) {
+    for (i = from + 1; i <= from + period; i++) {
       var d = h[i] - h[i - 1];
       if (d > 0) gain += d; else loss -= d;
     }
     gain /= period; loss /= period;
     var first = rsiValue(gain, loss);
-    for (i = 0; i <= period; i++) out[i] = first;
-    for (i = period + 1; i < n; i++) {
+    for (i = from; i <= from + period; i++) out[i] = first;
+    for (i = from + period + 1; i < to; i++) {
       var e = h[i] - h[i - 1];
       gain = (gain * (period - 1) + (e > 0 ? e : 0)) / period;
       loss = (loss * (period - 1) + (e < 0 ? -e : 0)) / period;
@@ -115,26 +130,77 @@ export default `  // ---- per-symbol objects ----
     }
   }
 
+  // Rate of change (%) over h[from..to), written into out[]. Returns the max
+  // absolute value in the segment so callers can normalise it to [-1, 1].
+  function rocSeg(h, from, to, out) {
+    var maxAbs = 1e-9, i;
+    for (i = from; i < to; i++) {
+      var prev = h[i - 1];
+      var r = (i > from && prev > 0) ? (h[i] / prev - 1) * 100 : 0;
+      out[i] = r;
+      if (Math.abs(r) > maxAbs) maxAbs = Math.abs(r);
+    }
+    return maxAbs;
+  }
+
+  // Day-over-day close change (%), normalised by the largest daily move of the
+  // window so the "slow" term stays in [-1, 1]. Returns 0 when there is no daily.
+  function dailyNorm(o) {
+    var d = o.daily;
+    if (!d || d.length < 2) return 0;
+    var maxAbs = 1e-9, last = 0, i;
+    for (i = 1; i < d.length; i++) {
+      var r = d[i - 1] > 0 ? (d[i] / d[i - 1] - 1) * 100 : 0;
+      last = r;
+      if (Math.abs(r) > maxAbs) maxAbs = Math.abs(r);
+    }
+    return Math.max(-1, Math.min(1, last / maxAbs));
+  }
+
+  // modes:
+  //   hourly   - normalised price line, hourly closes then live ticks
+  //   rsi      - hourly RSI then live-tick RSI
+  //   roc      - hourly rate of change then live-tick rate of change
+  //   combined - weighted daily + hourly + tick ROC (see config.js weights)
   function rebuild(o) {
     var h = o.hist, n = h.length;
     if (!o.enabled || n === 0) return;
-    var useRsi = mode === "rsi";
-    if (!useRsi && o.base == null) return;
-    var maxAbs = 0, i;
-    if (o.base != null) {
-      for (i = 0; i < n; i++) {
-        o.pct[i] = (h[i] / o.base - 1) * 100;
-        var a = Math.abs(o.pct[i]);
-        if (a > maxAbs) maxAbs = a;
+    var b = Math.min(o.nHist, n), i, y = 0, x = 0, z = 0;
+
+    if (mode === "hourly") {
+      var maxAbs = 0;
+      if (o.base != null) {
+        for (i = 0; i < n; i++) {
+          o.pct[i] = (h[i] / o.base - 1) * 100;
+          var a = Math.abs(o.pct[i]);
+          if (a > maxAbs) maxAbs = a;
+        }
       }
-      o.curPct = o.pct[n - 1];
+      for (i = 0; i < n; i++) o.rsi[i] = maxAbs > 1e-9 ? o.pct[i] / maxAbs : 0;
+    } else if (mode === "rsi") {
+      computeRSI(h, 0, b, o.rsi);
+      computeRSI(h, b, n, o.rsi);
+    } else if (mode === "roc") {
+      var m = rocSeg(h, 0, n, o.pct);
+      for (i = 0; i < n; i++) o.rsi[i] = m > 1e-9 ? o.pct[i] / m : 0;
+    } else {
+      var hmax = rocSeg(h, 0, b, o.pct);
+      var tmax = rocSeg(h, b, n, o.rsi);
+      var dNorm = dailyNorm(o);
+      var wsum = (W_DAILY + W_HOURLY + W_TICK) || 1;
+      for (i = 0; i < b; i++) o.pct[i] = hmax > 1e-9 ? o.pct[i] / hmax : 0;
+      var lastH = b > 0 ? o.pct[b - 1] : 0;
+      for (i = 0; i < b; i++) o.rsi[i] = Math.max(-1, Math.min(1, (W_DAILY * dNorm + W_HOURLY * o.pct[i]) / wsum));
+      for (i = b; i < n; i++) {
+        var tv = tmax > 1e-9 ? o.rsi[i] / tmax : 0;
+        o.rsi[i] = Math.max(-1, Math.min(1, (W_DAILY * dNorm + W_HOURLY * lastH + W_TICK * tv) / wsum));
+      }
     }
-    if (useRsi) computeRSI(h, n, o.rsi);
-    var y = 0, x = 0, z = 0;
+
     for (i = 0; i < n; i++) {
-      if (useRsi) y = (o.rsi[i] - 50) * (RSI_H / 50);
-      else if (mode === "norm") y = maxAbs > 1e-9 ? o.pct[i] / maxAbs * NORM_H : 0;
-      else y = Math.max(-CLAMP_DOWN, Math.min(CLAMP_UP, o.pct[i] * scale));
+      if (mode === "rsi") y = (o.rsi[i] - 50) * (RSI_H / 50);
+      else if (mode === "hourly") y = o.rsi[i] * NORM_H;
+      else y = o.rsi[i] * ROC_H;
       var r = R0 + i * DR;
       x = o.dx * r; z = o.dz * r;
       o.pos[i * 3] = x; o.pos[i * 3 + 1] = y; o.pos[i * 3 + 2] = z;
@@ -152,27 +218,37 @@ export default `  // ---- per-symbol objects ----
     o.curtain.geometry.attributes.color.needsUpdate = true;
     o.curtain.geometry.setDrawRange(0, Math.max(0, (n - 1) * 6));
 
-    if (useRsi) o.curRsi = o.rsi[n - 1];
-    var up = useRsi ? o.curRsi > 50 : o.curPct > 0;
-    var down = useRsi ? o.curRsi < 50 : o.curPct < 0;
+    var up = y > 0.0001, down = y < -0.0001;
     o.tipPos.set(x, y, z);
     o.tip.position.copy(o.tipPos);
-    o.tip.material.color.copy(y > 0.0001 ? UP : (y < -0.0001 ? DOWN : FLAT));
+    o.tip.material.color.copy(up ? UP : (down ? DOWN : FLAT));
     o.shown = true;
     o.tip.visible = true;
     o.el.style.display = "block";
     o.el.className = "lbl" + (up ? " up" : (down ? " down" : ""));
-    o.el.textContent = o.name + " " + (useRsi ? "RSI " + o.curRsi.toFixed(1) : fmtPct(o.curPct));
+    o.curLabel = formatMetric(o);
+    o.el.textContent = o.name + " " + o.curLabel;
   }
 
-  function fmtPct(v) { return (v >= 0 ? "+" : "") + v.toFixed(2) + "%"; }
-  function fmtPrice(p) { return p >= 100 ? p.toFixed(2) : p.toFixed(5); }
+  function formatMetric(o) {
+    var i = o.hist.length - 1;
+    if (mode === "rsi") return "RSI " + o.rsi[i].toFixed(1);
+    if (mode === "roc") return "ROC " + fmtSigned(o.pct[i], 3) + "%";
+    if (mode === "combined") return "CROC " + fmtSigned(o.rsi[i] * 100, 1);
+    return fmtPrice(o.hist[i]);
+  }
+  function fmtSigned(v, d) { return (v >= 0 ? "+" : "") + v.toFixed(d); }
+
+  function fmtPrice(p) { return p == null ? "--" : (p >= 100 ? p.toFixed(2) : p.toFixed(5)); }
   function rebuildAll() { syms.forEach(rebuild); }
 
   function clearSym(o) {
-    o.hist = []; o.base = null; o.sim = null; o.latest = null; o.ticks = 0;
+    seed(o);
+    o.sim = null; o.latest = null; o.ticks = 0;
     hideSym(o);
   }
   function rebase() { syms.forEach(clearSym); }
+
+  rebuildAll();
 
 `;

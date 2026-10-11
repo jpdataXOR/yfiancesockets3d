@@ -1,7 +1,9 @@
-// UI wiring (mode, scale, dot size, labels, terrain, demo, theme, view) and the clock.
+// UI wiring (mode, ROC weights, dot size, labels, terrain, demo, theme, view) and the clock.
 export default `  // ---- UI wiring ----
   document.getElementById("mode").addEventListener("change", function (e) { mode = e.target.value; rebuildAll(); });
-  document.getElementById("scale").addEventListener("input", function (e) { scale = Number(e.target.value); rebuildAll(); });
+  document.getElementById("wd").addEventListener("input", function (e) { W_DAILY = Number(e.target.value); rebuildAll(); });
+  document.getElementById("wh").addEventListener("input", function (e) { W_HOURLY = Number(e.target.value); rebuildAll(); });
+  document.getElementById("wt").addEventListener("input", function (e) { W_TICK = Number(e.target.value); rebuildAll(); });
   document.getElementById("tipsize").addEventListener("input", function (e) { tipPx = Number(e.target.value); });
   document.getElementById("labels-on").addEventListener("change", function (e) {
     labelsEl.className = e.target.checked ? "" : "off";

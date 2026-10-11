@@ -1,17 +1,16 @@
-// Live 3D price cloud - Cloudflare Worker
-// Each symbol is one line radiating from the centre. Distance from the centre = time
-// (oldest at the centre, newest at the tip). Height = % change since the baseline.
-// The landscape underneath uses the eroded fbm from Inigo Quilez's "More noise" article
-// (value noise with analytic derivatives, h += b * n / (1 + dot(d, d))).
+// Live 3D price cloud - Cloudflare Worker.
 //
-// This entry only assembles the page; the client script lives in ./client and is
-// inlined into the served HTML, while the markup lives in ./document.
+// Assembles the page and seeds each line with history pulled from the two D1
+// databases (hourly candles + daily forex prices). The client script lives in
+// ./client and is inlined into the served HTML; the markup lives in ./document.
 import { GROUPS } from "./groups.js";
 import { renderPage } from "./page.js";
+import { loadHistory } from "./history.js";
 
 export default {
-  async fetch() {
-    const html = renderPage(GROUPS);
+  async fetch(request, env) {
+    const history = await loadHistory(env);
+    const html = renderPage(GROUPS, history);
     return new Response(html, { headers: { "content-type": "text/html;charset=UTF-8" } });
   }
-}
+};

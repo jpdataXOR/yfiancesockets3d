@@ -15,7 +15,7 @@ export default `  // ---- once-per-second sampler ----
       if (o.latest == null) return;
       if (o.base == null) o.base = o.latest;
       o.hist.push(o.latest);
-      if (o.hist.length > N) o.hist.shift();
+      if (o.hist.length > NPTS) { o.hist.shift(); if (o.nHist > 0) o.nHist--; }
       rebuild(o);
     });
   }, SAMPLE_MS);
