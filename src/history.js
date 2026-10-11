@@ -19,11 +19,25 @@ function dailyName(sym) {
   return code.length === 6 ? code.slice(0, 3) + "/" + code.slice(3) : null;
 }
 
+// Coerce a candle timestamp (epoch seconds/milliseconds or a SQL datetime
+// string) to epoch milliseconds. SQL "YYYY-MM-DD HH:MM:SS" is treated as UTC.
+function toMs(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  const num = Number(s);
+  if (s !== "" && !isNaN(num)) return num > 1e12 ? num : num * 1000;
+  // SQL "YYYY-MM-DD HH:MM:SS" is UTC; parse explicitly to avoid local-time drift.
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (m) return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  const t = Date.parse(s);
+  return isNaN(t) ? null : t;
+}
+
 export async function loadHistory(env) {
   const out = {};
   const byDaily = {};
   SYMBOLS.forEach((s) => {
-    out[s] = { daily: [], hourly: [] };
+    out[s] = { daily: [], hourly: [], times: [] };
     const d = dailyName(s);
     if (d) byDaily[d] = s;
   });
@@ -32,7 +46,7 @@ export async function loadHistory(env) {
   try {
     const sets = await Promise.all([
       env.FOREXBINDING.prepare(
-        "SELECT i.symbol AS symbol, h.close AS close " +
+        "SELECT i.symbol AS symbol, h.timestamp AS ts, h.close AS close " +
           "FROM hourly_candles h JOIN instruments i ON i.id = h.instrument_id " +
           "ORDER BY i.symbol, h.timestamp"
       ).all(),
@@ -46,7 +60,7 @@ export async function loadHistory(env) {
 
     (sets[0].results || []).forEach((r) => {
       const o = out[r.symbol];
-      if (o && r.close != null) o.hourly.push(r.close);
+      if (o && r.close != null) { o.hourly.push(r.close); o.times.push(toMs(r.ts)); }
     });
     (sets[1].results || []).forEach((r) => {
       const s = byDaily[r.instrument];
@@ -58,7 +72,10 @@ export async function loadHistory(env) {
 
   SYMBOLS.forEach((s) => {
     const o = out[s];
-    if (o.hourly.length > HIST_HOURLY) o.hourly = o.hourly.slice(-HIST_HOURLY);
+    if (o.hourly.length > HIST_HOURLY) {
+      o.hourly = o.hourly.slice(-HIST_HOURLY);
+      o.times = o.times.slice(-HIST_HOURLY);
+    }
     if (o.daily.length > HIST_DAILY) o.daily = o.daily.slice(-HIST_DAILY);
   });
   return out;

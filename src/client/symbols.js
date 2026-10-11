@@ -1,4 +1,8 @@
-// Per-symbol geometry (line, curtain, dot, label) plus the rebuild helpers.
+// Per-symbol geometry (step line, curtain, dot, label) plus the rebuild helpers.
+//
+// Each line is drawn as a STEP line: from every sample the height holds flat out
+// to the next radius, then jumps vertically to the next sample height. That needs
+// two vertices per sample, hence the doubled buffers below. Radius = time.
 export default `  // ---- per-symbol objects ----
   var labelsEl = document.getElementById("labels");
   var state = {}, syms = [], tips = [], curtains = [];
@@ -8,6 +12,7 @@ export default `  // ---- per-symbol objects ----
   // Historical series injected by the Worker (src/history.js).
   var HIST = (typeof HISTORY === "object" && HISTORY) ? HISTORY : {};
   function hourSeries(s) { return (HIST[s] && HIST[s].hourly) ? HIST[s].hourly : []; }
+  function timeSeries(s) { return (HIST[s] && HIST[s].times) ? HIST[s].times : []; }
   function daySeries(s) { return (HIST[s] && HIST[s].daily) ? HIST[s].daily : []; }
 
   function shortName(s) {
@@ -32,13 +37,13 @@ export default `  // ---- per-symbol objects ----
         sym: s, name: shortName(s), group: g.name, grp: g, crypto: s.indexOf("-USD") > -1,
         enabled: !Array.isArray(saved2) || saved2.indexOf(s) > -1,
         dx: Math.cos(a), dz: Math.sin(a),
-        live: null, sim: null, latest: null, base: null, ticks: 0, curLabel: "",
-        daily: daySeries(s), hourly: hourSeries(s), hist: [], nHist: 0,
+        live: null, sim: null, latest: null, base: null, ticks: 0, curLabel: "", vcount: 0,
+        daily: daySeries(s), hourly: hourSeries(s), htimes: timeSeries(s), hist: [], times: [], nHist: 0,
         pct: new Float32Array(NPTS), rsi: new Float32Array(NPTS), tipPos: new THREE.Vector3(), shown: false
       };
 
-      o.pos = new Float32Array(NPTS * 3);
-      o.col = new Float32Array(NPTS * 3);
+      o.pos = new Float32Array(2 * NPTS * 3);
+      o.col = new Float32Array(2 * NPTS * 3);
       var lg = new THREE.BufferGeometry();
       lg.setAttribute("position", new THREE.BufferAttribute(o.pos, 3));
       lg.setAttribute("color", new THREE.BufferAttribute(o.col, 3));
@@ -47,15 +52,15 @@ export default `  // ---- per-symbol objects ----
       o.line.frustumCulled = false;
       scene.add(o.line);
 
-      o.cpos = new Float32Array(NPTS * 2 * 3);
-      o.ccol = new Float32Array(NPTS * 2 * 3);
+      o.cpos = new Float32Array(2 * NPTS * 2 * 3);
+      o.ccol = new Float32Array(2 * NPTS * 2 * 3);
       var cg = new THREE.BufferGeometry();
       cg.setAttribute("position", new THREE.BufferAttribute(o.cpos, 3));
       cg.setAttribute("color", new THREE.BufferAttribute(o.ccol, 3));
-      var idx = new Uint16Array((NPTS - 1) * 6);
-      for (var i = 0; i < NPTS - 1; i++) {
-        var A = 2 * i, B = 2 * i + 1, C = 2 * i + 2, D = 2 * i + 3;
-        idx.set([A, B, C, B, D, C], i * 6);
+      var idx = new Uint16Array((2 * NPTS - 2) * 6);
+      for (var q = 0; q < 2 * NPTS - 2; q++) {
+        var A = 2 * q, B = 2 * q + 1, C = 2 * q + 2, D = 2 * q + 3;
+        idx.set([A, B, C, B, D, C], q * 6);
       }
       cg.setIndex(new THREE.BufferAttribute(idx, 1));
       cg.setDrawRange(0, 0);
@@ -87,18 +92,32 @@ export default `  // ---- per-symbol objects ----
     arr[off] = c.r; arr[off + 1] = c.g; arr[off + 2] = c.b;
   }
 
+  // Append one line+curtain vertex and return the next vertex index.
+  function emit(o, v, x, y, z) {
+    o.pos[v * 3] = x; o.pos[v * 3 + 1] = y; o.pos[v * 3 + 2] = z;
+    setColor(o.col, v * 3, y);
+    var t = v * 6;
+    o.cpos[t] = x; o.cpos[t + 1] = y; o.cpos[t + 2] = z;
+    o.cpos[t + 3] = x; o.cpos[t + 4] = 0; o.cpos[t + 5] = z;
+    setColor(o.ccol, t, y);
+    setColor(o.ccol, t + 3, y);
+    return v + 1;
+  }
+
   function hideSym(o) {
     o.shown = false;
+    o.vcount = 0;
     o.tip.visible = false;
     o.el.style.display = "none";
     o.line.geometry.setDrawRange(0, 0);
     o.curtain.geometry.setDrawRange(0, 0);
   }
 
-  // Seed the inner stretch of the line from the D1 history: hourly closes first,
-  // then live ticks keep appending at the tip (see stream.js).
+  // Seed the inner stretch of the line from the D1 history: hourly closes (and
+  // their timestamps) first, then live ticks keep appending at the tip.
   function seed(o) {
     o.hist = o.hourly.slice();
+    o.times = o.htimes.slice();
     o.nHist = o.hist.length;
     o.base = o.hist.length ? o.hist[0] : null;
   }
@@ -157,6 +176,13 @@ export default `  // ---- per-symbol objects ----
     return Math.max(-1, Math.min(1, last / maxAbs));
   }
 
+  // Height (world Y) of sample i for the active mode.
+  function heightAt(o, i) {
+    if (mode === "rsi") return (o.rsi[i] - 50) * (RSI_H / 50);
+    if (mode === "hourly") return o.rsi[i] * NORM_H;
+    return o.rsi[i] * ROC_H;
+  }
+
   // modes:
   //   hourly   - normalised price line, hourly closes then live ticks
   //   rsi      - hourly RSI then live-tick RSI
@@ -165,7 +191,7 @@ export default `  // ---- per-symbol objects ----
   function rebuild(o) {
     var h = o.hist, n = h.length;
     if (!o.enabled || n === 0) return;
-    var b = Math.min(o.nHist, n), i, y = 0, x = 0, z = 0;
+    var b = Math.min(o.nHist, n), i;
 
     if (mode === "hourly") {
       var maxAbs = 0;
@@ -197,28 +223,28 @@ export default `  // ---- per-symbol objects ----
       }
     }
 
+    // Emit the step line: flat run to the next radius, then the vertical jump.
+    var v = 0, lastY = 0;
     for (i = 0; i < n; i++) {
-      if (mode === "rsi") y = (o.rsi[i] - 50) * (RSI_H / 50);
-      else if (mode === "hourly") y = o.rsi[i] * NORM_H;
-      else y = o.rsi[i] * ROC_H;
+      lastY = heightAt(o, i);
       var r = R0 + i * DR;
-      x = o.dx * r; z = o.dz * r;
-      o.pos[i * 3] = x; o.pos[i * 3 + 1] = y; o.pos[i * 3 + 2] = z;
-      setColor(o.col, i * 3, y);
-      var t = i * 6;
-      o.cpos[t] = x; o.cpos[t + 1] = y; o.cpos[t + 2] = z;
-      o.cpos[t + 3] = x; o.cpos[t + 4] = 0; o.cpos[t + 5] = z;
-      setColor(o.ccol, t, y);
-      setColor(o.ccol, t + 3, y);
+      v = emit(o, v, o.dx * r, lastY, o.dz * r);
+      if (i < n - 1) {
+        var r2 = R0 + (i + 1) * DR;
+        v = emit(o, v, o.dx * r2, lastY, o.dz * r2);
+      }
     }
     o.line.geometry.attributes.position.needsUpdate = true;
     o.line.geometry.attributes.color.needsUpdate = true;
-    o.line.geometry.setDrawRange(0, n);
+    o.line.geometry.setDrawRange(0, v);
     o.curtain.geometry.attributes.position.needsUpdate = true;
     o.curtain.geometry.attributes.color.needsUpdate = true;
-    o.curtain.geometry.setDrawRange(0, Math.max(0, (n - 1) * 6));
+    o.curtain.geometry.setDrawRange(0, Math.max(0, (v - 1) * 6));
 
-    var up = y > 0.0001, down = y < -0.0001;
+    var lv = v - 1;
+    var x = o.pos[lv * 3], y = o.pos[lv * 3 + 1], z = o.pos[lv * 3 + 2];
+    var up = lastY > 0.0001, down = lastY < -0.0001;
+    o.vcount = v;
     o.tipPos.set(x, y, z);
     o.tip.position.copy(o.tipPos);
     o.tip.material.color.copy(up ? UP : (down ? DOWN : FLAT));
@@ -226,19 +252,18 @@ export default `  // ---- per-symbol objects ----
     o.tip.visible = true;
     o.el.style.display = "block";
     o.el.className = "lbl" + (up ? " up" : (down ? " down" : ""));
-    o.curLabel = formatMetric(o);
+    o.curLabel = metricAt(o, n - 1);
     o.el.textContent = o.name + " " + o.curLabel;
   }
 
-  function formatMetric(o) {
-    var i = o.hist.length - 1;
-    if (mode === "rsi") return "RSI " + o.rsi[i].toFixed(1);
-    if (mode === "roc") return "ROC " + fmtSigned(o.pct[i], 3) + "%";
-    if (mode === "combined") return "CROC " + fmtSigned(o.rsi[i] * 100, 1);
-    return fmtPrice(o.hist[i]);
+  // Formatted metric value at sample index s (s may be any point, for the hover).
+  function metricAt(o, s) {
+    if (mode === "rsi") return "RSI " + o.rsi[s].toFixed(1);
+    if (mode === "roc") return "ROC " + fmtSigned(o.pct[s], 3) + "%";
+    if (mode === "combined") return "CROC " + fmtSigned(o.rsi[s] * 100, 1);
+    return fmtPrice(o.hist[s]);
   }
   function fmtSigned(v, d) { return (v >= 0 ? "+" : "") + v.toFixed(d); }
-
   function fmtPrice(p) { return p == null ? "--" : (p >= 100 ? p.toFixed(2) : p.toFixed(5)); }
   function rebuildAll() { syms.forEach(rebuild); }
 
